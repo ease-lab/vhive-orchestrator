@@ -1,0 +1,64 @@
+# MIT License
+#
+# Copyright (c) 2021 Mert Bora Alper and EASE lab
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Execute this playbook using 
+#   ansible-playbook -u <YOUR SSH USERNAME> -i <HOSTNAME>, playbook.yaml
+
+---
+- name: Create Self-Hosted KinD Runners
+  hosts: all
+  vars_prompt:
+    - name: ACCESS_TOKEN
+      prompt: Enter GitHub Access Token
+  tasks:
+    - name: Generate a random cluster name
+      shell: 'printf "$(shuf -n1 /usr/share/dict/predicates)-$(shuf -n1 /usr/share/dict/objects)"'
+      register: cluster_name
+
+    - name: Print the generated random cluster name
+      ansible.builtin.debug:
+        var: cluster_name.stdout
+
+    - name: Install knative-kind
+      shell: "KIND_CLUSTER_NAME={{ cluster_name.stdout }} bash /tmp/knative-kind-install.sh"
+
+    - name: Get GitHub runner token
+      uri:
+        method: POST
+        url: https://api.github.com/repos/boramalper/vhive/actions/runners/registration-token
+        headers:
+          Accept: application/vnd.github.v3+json
+          Authorization: "token {{ ACCESS_TOKEN }}"
+        status_code: 201
+      register: registration
+
+    - name: Copy setup-runner.sh to the remote host
+      ansible.builtin.copy:
+        src: setup-runner.sh
+        dest: /tmp/setup-runner.sh
+        force: no
+
+    - name: Copy setup.runner.sh into the containers
+      command: "docker cp /tmp/setup-runner.sh {{ cluster_name.stdout }}-control-plane:/setup-runner.sh"
+
+    - name: Setup and start GitHub runners in clusters
+      command: "docker exec -d -e RUNNER_ALLOW_RUNASROOT=1 -e TOKEN={{ registration.json.token }} {{ cluster_name.stdout }}-control-plane bash /setup-runner.sh"
