@@ -1,6 +1,6 @@
 // MIT License
 //
-// Copyright (c) 2020 Plamen Petrov and EASE lab
+// Copyright (c) 2020 Nathaniel Tornow and EASE lab
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,20 +25,10 @@ package cri
 import (
 	"context"
 
-	log "github.com/sirupsen/logrus"
 	criapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 )
 
-// RemoveContainer removes a container or a VM
-func (s *Service) RemoveContainer(ctx context.Context, r *criapi.RemoveContainerRequest) (*criapi.RemoveContainerResponse, error) {
-	log.Debugf("RemoveContainer for %q", r.GetContainerId())
-	containerID := r.GetContainerId()
-
-	go func() {
-		if err := s.coordinator.StopSandbox(context.Background(), containerID); err != nil {
-			log.WithError(err).Error("failed to stop microVM")
-		}
-	}()
-
-	return s.stockRuntimeClient.RemoveContainer(ctx, r)
+type ServiceInterface interface {
+	CreateContainer(ctx context.Context, r *criapi.CreateContainerRequest) (*criapi.CreateContainerResponse, error)
+	RemoveContainer(ctx context.Context, r *criapi.RemoveContainerRequest) (*criapi.RemoveContainerResponse, error)
 }

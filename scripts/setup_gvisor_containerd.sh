@@ -22,25 +22,33 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+set -e
+
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-ROOT="$( cd $DIR && cd .. && cd .. && pwd)"
-SCRIPTS=$ROOT/scripts
+ROOT="$( cd $DIR && cd .. && pwd)"
+BINS=$ROOT/bin
+CTRDCONFIGS=$ROOT/configs/gvisor-containerd
+CNICONFIGS=$ROOT/configs/cni
 
-STOCK_CONTAINERD=$1
+sudo mkdir -p /etc/gvisor-containerd
 
-$SCRIPTS/utils/disable_auto_updates.sh
+cd $ROOT
+git lfs pull
 
-source $SCRIPTS/install_go.sh
-$SCRIPTS/setup_system.sh
+DST=/usr/local/bin
 
-if [ "$STOCK_CONTAINERD" != "stock-only" ]; then
-    $SCRIPTS/setup_firecracker_containerd.sh
-    $SCRIPTS/setup_gvisor_containerd.sh
-fi
+for BINARY in containerd-shim-runsc-v1 gvisor-containerd
+do
+  sudo cp $BINS/$BINARY $DST
+done
 
-$SCRIPTS/install_stock.sh
+sudo cp $CTRDCONFIGS/config.toml /etc/gvisor-containerd/
 
-if [ "$STOCK_CONTAINERD" != "stock-only" ]; then
-    $SCRIPTS/create_devmapper.sh
-fi
+sudo mkdir -p /etc/cni/net.d
 
+DST=/etc/cni/net.d
+
+for CONFIG in 10-bridge.conf 99-loopback.conf
+do
+  sudo cp $CNICONFIGS/$CONFIG $DST
+done

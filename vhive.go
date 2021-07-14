@@ -26,14 +26,16 @@ import (
 	"context"
 	"flag"
 	"fmt"
+
 	"math/rand"
 	"net"
 	"os"
 	"runtime"
 
 	ctrdlog "github.com/containerd/containerd/log"
-	fccdcri "github.com/ease-lab/vhive/cri"
-	fccoor "github.com/ease-lab/vhive/cri/coordinator/firecracker"
+	"github.com/ease-lab/vhive/cri"
+	fccri "github.com/ease-lab/vhive/cri/firecracker"
+	gvcri "github.com/ease-lab/vhive/cri/gvisor"
 	ctriface "github.com/ease-lab/vhive/ctriface"
 	hpb "github.com/ease-lab/vhive/examples/protobuf/helloworld"
 	pb "github.com/ease-lab/vhive/proto"
@@ -81,8 +83,20 @@ func main() {
 	isLazyMode = flag.Bool("lazy", false, "Enable lazy serving mode when UPFs are enabled")
 	criSock = flag.String("criSock", "/etc/firecracker-containerd/fccd-cri.sock", "Socket address for CRI service")
 	hostIface = flag.String("hostIface", "", "Host net-interface for the VMs to bind to for internet access")
-
+	sandbox := flag.String("sandbox", "firecracker", "Determine the sandboxing-technique to use")
 	flag.Parse()
+
+	if *sandbox != "firecracker" && *sandbox != "gvisor" {
+		log.Fatalln("Only \"gvisor\" or \"firecracker\" are supported as sandboxing-techniques")
+		return
+	}
+
+	if *sandbox == "gvisor" {
+		if err := setupGVisorCRI(); err != nil {
+			log.Fatalf("failed to setup GVisorCRI: %v", err)
+		}
+		return
+	}
 
 	if *isUPFEnabled && !*isSnapshotsEnabled {
 		log.Error("User-level page faults are not supported without snapshots")
@@ -132,7 +146,7 @@ func main() {
 
 	funcPool = NewFuncPool(*isSaveMemory, *servedThreshold, *pinnedFuncNum, testModeOn)
 
-	go criServe()
+	go setupFirecrackerCRI()
 	go orchServe()
 	fwdServe()
 }
@@ -145,7 +159,7 @@ type fwdServer struct {
 	hpb.UnimplementedFwdGreeterServer
 }
 
-func criServe() {
+func setupFirecrackerCRI() {
 	lis, err := net.Listen("unix", *criSock)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
@@ -153,9 +167,12 @@ func criServe() {
 
 	s := grpc.NewServer()
 
-	coor := fccoor.NewFirecrackerCoordinator(orch)
+	fcService, err := fccri.NewFirecrackerService(orch)
+	if err != nil {
+		log.Fatalf("failed to create firecracker service %v", err)
+	}
 
-	criService, err := fccdcri.NewService(coor)
+	criService, err := cri.NewService(fcService)
 	if err != nil {
 		log.Fatalf("failed to create CRI service %v", err)
 	}
@@ -246,4 +263,30 @@ func (s *fwdServer) FwdHello(ctx context.Context, in *hpb.FwdHelloReq) (*hpb.Fwd
 
 	resp, _, err := funcPool.Serve(ctx, fID, imageName, payload)
 	return resp, err
+}
+
+func setupGVisorCRI() error {
+	lis, err := net.Listen("unix", *criSock)
+	if err != nil {
+		return fmt.Errorf("failed to listen: %v", err)
+	}
+
+	s := grpc.NewServer()
+
+	gvService, err := gvcri.NewGVisorService()
+	if err != nil {
+		return fmt.Errorf("failed to create firecracker service %v", err)
+	}
+
+	criService, err := cri.NewService(gvService)
+	if err != nil {
+		return fmt.Errorf("failed to create CRI service %v", err)
+	}
+
+	criService.Register(s)
+
+	if err := s.Serve(lis); err != nil {
+		return fmt.Errorf("failed to serve: %v", err)
+	}
+	return nil
 }
